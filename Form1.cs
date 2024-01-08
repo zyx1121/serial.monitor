@@ -1,4 +1,3 @@
-using System.Configuration;
 using System.IO.Ports;
 using System.Text;
 
@@ -6,110 +5,173 @@ namespace SerialMonitor
 {
     public partial class Form1 : Form
     {
+        private delegate void Receive(byte[] buffer);
+        private byte[] testData = new byte[50];
+        private int countC;
+        private int encoding = 0;
+
         public Form1()
         {
             InitializeComponent();
-        }
-
-        private delegate void Receive(byte[] buffer);
-
-        private int encoding = 0;
-
-        private void ReceiveData(byte[] buffer)
-        {
-            foreach (byte b in buffer)
-            {
-                switch (encoding)
-                {
-                    case 0:
-                        Monitor.Text += b.ToString();
-                        break;
-
-                    case 1:
-                        for (int i = 0b10000000; i > 0; i >>= 1)
-                            Monitor.Text += ((b & i) == 0) ? 0 : 1;
-                        Monitor.Text += ' ';
-                        break;
-
-                    case 2:
-                        byte[] bs = { b };
-                        Monitor.Text += BitConverter.ToString(bs) + ' ';
-                        break;
-                }
-
-                Monitor.ScrollBars = ScrollBars.Vertical;
-                Monitor.SelectionStart = Monitor.Text.Length;
-                Monitor.ScrollToCaret();
-            }
+            comboBoxParity.SelectedIndex = 0;
+            comboBoxMonitorMode.SelectedIndex = 2;
         }
 
         private void Form1_Load(object sender, EventArgs e)
         {
             string[] ports = SerialPort.GetPortNames();
+            comboBoxPort.Items.AddRange(ports);
+            comboBoxPort.SelectedIndex = comboBoxPort.Items.Count - 1;
+        }
 
-            foreach (string port in ports)
+        private void ButtonOpen_Click(object sender, EventArgs e)
+        {
+            if (buttonOpen.Text == "Close Port")
             {
-                toolStripComboBoxCOM.Items.Add(port);
+                try { serialPort.Close(); }
+                catch { }
+                this.Text = "Serial Monitor - Device Offline";
+                buttonOpen.Text = "Open Port";
+                EnableControls(true);
+                return;
             }
 
-            toolStripComboBoxCOM.SelectedIndex = toolStripComboBoxCOM.Items.Count - 1;
-            toolStripComboBoxParity.SelectedIndex = 0;
-            toolStripStatusBaudrate.Text = "9600";
+            if (buttonOpen.Text == "Open Port")
+            {
+                serialPort.PortName = comboBoxPort.Text;
+                serialPort.BaudRate = int.Parse(comboBoxBautRate.Text);
+                serialPort.Parity = (Parity)comboBoxParity.SelectedIndex;
+                try { serialPort.Open(); }
+                catch { }
+                this.Text = "Serial Monitor - Device Online";
+                buttonOpen.Text = "Close Port";
+                EnableControls(false);
+            }
+        }
 
-            toolStripStatusCOM.Text = toolStripComboBoxCOM.SelectedItem.ToString();
-            toolStripStatusParity.Text = toolStripComboBoxParity.SelectedItem.ToString();
-            toolStripStatusBaudrate.Text = toolStripTextBoxBaudRate.Text;
+        private static string ConverFGM(byte[] data)
+        {
+            double dataInt = 0;
+            for (int i = 1; i < 6; i++)
+                dataInt += (data[i] - 0x30) * Math.Pow(10, (5 - i));
+            dataInt = dataInt * 10 / 32767;
+            byte[] result = [data[0]];
+            return Encoding.ASCII.GetString(result) + dataInt.ToString("0.000") + "V";
+        }
+
+        private void PrintFGM()
+        {
+            byte[] adc1 = [testData[0], testData[1], testData[2], testData[3], testData[4], testData[5]];
+            byte[] adc2 = [testData[6], testData[7], testData[8], testData[9], testData[10], testData[11]];
+            byte[] adc3 = [testData[12], testData[13], testData[14], testData[15], testData[16], testData[17]];
+            byte[] adc4 = [testData[18], testData[19], testData[20], testData[21], testData[22], testData[23]];
+            byte[] adc5 = [testData[24], testData[25], testData[26], testData[27], testData[28], testData[29]];
+            byte[] adc6 = [testData[30], testData[31], testData[32], testData[33], testData[34], testData[35]];
+
+            string temp = DateTime.Now.ToString("ttHH:mm:ss") + "    ";
+
+            temp += "P4(MAG1)    ";
+
+            temp += "X ";
+            temp += ConverFGM(adc1) + "    ";
+
+            temp += "Y ";
+            temp += ConverFGM(adc2) + "    ";
+
+            temp += "Z ";
+            temp += ConverFGM(adc3) + "    ";
+
+            temp += Environment.NewLine + "                P5(MAG2)    ";
+
+            temp += "X ";
+            temp += ConverFGM(adc4) + "    ";
+
+            temp += "Y ";
+            temp += ConverFGM(adc5) + "    ";
+
+            temp += "Z ";
+            temp += ConverFGM(adc6) + "    ";
+
+            temp += Environment.NewLine + Environment.NewLine;
+
+            Monitor.AppendText(temp);
+        }
+
+        private void ReceiveData(byte[] buffer)
+        {
+            StringBuilder sb = new();
+
+            foreach (byte b in buffer)
+            {
+                switch (encoding)
+                {
+                    case 0:
+                        sb.Append(b);
+                        break;
+                    case 1:
+                        for (int j = 0b10000000; j > 0; j >>= 1)
+                            sb.Append(((b & j) != 0) ? "1" : "0");
+                        sb.Append(' ');
+                        break;
+                    case 2:
+                        byte[] t2 = [b];
+                        sb.Append(BitConverter.ToString(t2) + ' ');
+                        break;
+                    case 3:
+                        testData[countC] = b;
+                        if (++countC == 50)
+                        {
+                            countC = 0;
+                            PrintFGM();
+                        }
+                        break;
+                }
+            }
+
+            Monitor.AppendText(sb.ToString());
+
+            Monitor.ScrollBars = ScrollBars.Vertical;
+            Monitor.SelectionStart = Monitor.Text.Length;
+            Monitor.ScrollToCaret();
         }
 
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {
             SerialPort sp = (SerialPort)sender;
             byte[] buffer = new byte[sp.BytesToRead];
-            int lenght = sp.Read(buffer, 0, buffer.Length);
+            int length = sp.Read(buffer, 0, buffer.Length);
             Invoke(new Receive(ReceiveData), new object[] { buffer });
         }
 
-        private void toolStripMenuItemOpen_Click(object sender, EventArgs e)
+        private void SerialPort_SendData()
         {
-            serialPort.PortName = toolStripComboBoxCOM.SelectedItem.ToString();
-            serialPort.BaudRate = int.Parse(toolStripTextBoxBaudRate.Text);
-            serialPort.Parity = (Parity)toolStripComboBoxParity.SelectedIndex;
+            byte[] data = Encoding.Default.GetBytes(textBoxSend.Text);
 
-            try
+            if (data.Length % 2 == 0)
             {
-                serialPort.Open();
-            }
-            catch
-            {
-                MessageBox.Show("Can't Open the Port!");
-            }
+                this.Text = "Serial Monitor - Device Online - " + textBoxSend.Text;
+                for (int i = 0; i < data.Length; i += 2)
+                {
+                    char[] c = { (char)data[i], (char)data[i + 1] };
 
-            if (serialPort.IsOpen)
-            {
-                textBoxSend.Enabled = true;
-                toolStripComboBoxCOM.Enabled = false;
-                toolStripTextBoxBaudRate.Enabled = false;
-                toolStripMenuItemOpen.Enabled = false;
-                toolStripMenuItemClose.Enabled = true;
-                this.Text = "Serial Monitor - Device Online";
+                    for (int j = 0; j < 2; j++)
+                    {
+                        if (char.IsDigit(c[j]))
+                            c[j] -= '0';
+                        else if (char.ToUpper(c[j]) >= 'A' && char.ToUpper(c[j]) <= 'F')
+                            c[j] -= (char)0x37;
+                    }
+
+                    c[0] <<= 4;
+
+                    byte[] d = { (byte)(c[0] + c[1]) };
+
+                    serialPort.Write(d, 0, 1);
+                }
             }
         }
 
-        private void toolStripMenuItemClose_Click(object sender, EventArgs e)
-        {
-            if (serialPort.IsOpen)
-            {
-                serialPort.Close();
-                textBoxSend.Enabled = false;
-                toolStripComboBoxCOM.Enabled = true;
-                toolStripTextBoxBaudRate.Enabled = true;
-                toolStripMenuItemOpen.Enabled = true;
-                toolStripMenuItemClose.Enabled = false;
-                this.Text = "Serial Monitor";
-            }
-        }
-
-        private void textBoxSend_KeyPress(object sender, KeyPressEventArgs e)
+        private void TextBoxSend_KeyPress(object sender, KeyPressEventArgs e)
         {
             e.KeyChar = char.ToUpper(e.KeyChar);
 
@@ -120,75 +182,32 @@ namespace SerialMonitor
 
             if (e.KeyChar == (char)Keys.Enter)
             {
-                byte[] data = Encoding.Default.GetBytes(textBoxSend.Text);
-                
-                if (data.Length % 2 == 0)
-                {
-                    this.Text = "Serial Monitor - Device Online - " + textBoxSend.Text;
-                    for (int i = 0; i < data.Length; i += 2)
-                    {
-                        char[] c = [(char)data[i], (char)data[i + 1]];
-
-                        for (int j = 0; j < 2; j++)
-                        {
-                            if ("0123456789".Contains(c[j]))
-                                c[j] -= '0';
-                            else if ("ABCDEF".Contains(c[j]))
-                                c[j] -= (char)0x37;
-                        }
-
-                        c[0] <<= 4;
-
-                        byte[] d = [(byte)(c[0] + c[1])];
-
-                        serialPort.Write(d, 0, 1);
-                    }
-                }
+                SerialPort_SendData();
             }
         }
 
-        private void toolStripMenuItemClear_Click(object sender, EventArgs e)
+        private void ComboBoxMonitorMode_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            encoding = comboBoxMonitorMode.SelectedIndex;
+        }
+
+        private void ButtonClear_Click(object sender, EventArgs e)
         {
             Monitor.Clear();
         }
 
-        private void asciiToolStripMenuItem_Click(object sender, EventArgs e)
+        private void ButtonSend_Click(object sender, EventArgs e)
         {
-            encoding = 0;
-            asciiToolStripMenuItem.Checked = true;
-            binaryToolStripMenuItem.Checked = false;
-            hexToolStripMenuItem.Checked = false;
+            SerialPort_SendData();
         }
 
-        private void binaryToolStripMenuItem_Click(object sender, EventArgs e)
+        private void EnableControls(bool enable)
         {
-            encoding = 1;
-            asciiToolStripMenuItem.Checked = false;
-            binaryToolStripMenuItem.Checked = true;
-            hexToolStripMenuItem.Checked = false;
-        }
-
-        private void hexToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            encoding = 2;
-            asciiToolStripMenuItem.Checked = false;
-            binaryToolStripMenuItem.Checked = false;
-            hexToolStripMenuItem.Checked = true;
-        }
-
-        private void toolStripTextBoxBaudRate_TextChanged(object sender, EventArgs e)
-        {
-            toolStripStatusBaudrate.Text = toolStripTextBoxBaudRate.Text;
-        }
-
-        private void toolStripComboBoxCOM_SelectedIndexChanged(object sender, EventArgs e)
-        {
-            toolStripStatusCOM.Text = toolStripComboBoxCOM.SelectedItem.ToString();
-        }
-
-        private void toolStripComboBoxParity_SelectedIndexChanged(object sender, EventArgs e)
-        {
-            toolStripStatusParity.Text = toolStripComboBoxParity.SelectedItem.ToString();
+            comboBoxPort.Enabled = enable;
+            comboBoxBautRate.Enabled = enable;
+            comboBoxParity.Enabled = enable;
+            textBoxSend.Enabled = !enable;
+            buttonSend.Enabled = !enable;
         }
     }
 }
